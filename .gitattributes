@@ -1,0 +1,16 @@
+# The macOS runner executes ./unixnu directly, and the patch file must apply
+# byte for byte.  Keep everything text as LF regardless of the host OS.
+* text=auto eol=lf
+
+*.patch text eol=lf
+unixnu text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+
+*.png binary
+*.img binary
+*.macho binary

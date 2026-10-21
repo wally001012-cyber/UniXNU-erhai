@@ -1,0 +1,78 @@
+# OnePlus Pad 2 Pro (erhai / OPD2413, SM8750P) — UniXNU device repository.
+#
+# Modelled on IssacL04/UniXNU-Sun_SM8750 (OnePlus 13T, same SM8750 / Sun SoC).
+# Stage target: reach the XNU entry (green bar + S1..S6) on the stock ABL.
+#
+# Hardware values measured on this unit:
+#   FD base/size  0xA7000000 / 0x2A8000   (stock uefi_a ELF PT_LOAD)
+#   splash_region 0xFC800000 + 0x2B00000  (live DT /reserved-memory/splash_region)
+#   GIC           0x16000000 / GICR 0x16080000 / stride 0x40000
+#   timebase      19.2 MHz
+#   panel         3392x2400  qcom,mdss_dsi_panel_XN242_P_D_A0024_vid
+#   touch         novatek,nf_nt36536
+#   UFS           0x1d84000 (not used in this profile)
+
+[board]
+name = "erhai"
+soc = "SM8750"
+description = "OnePlus Pad 2 Pro OPD2413: XNU source-kernel bring-up with early screen diagnostics"
+kit = "erhai"
+
+[kernel]
+defconfig = "erhai_defconfig"
+# First reach the platform expert without importing Apple's device drivers.
+source_only = true
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "build-libpthread-kernel.py",
+  "build-arm-platform.py",
+]
+
+[payload]
+volume = "ERHAIESP"
+size_mib = 64
+loader = "firmware"
+title = "OnePlus Pad 2 Pro XNU bring-up"
+dram_size = "0x10000000"
+timeout = 10
+# The source-only kernel needs 33 slots at the default 260-zone budget; 240 needs 30.
+kernel_args = ["-v", "serial=0", "debug=0x14e", "cpus=1", "-enable_kprintf_spam", "kt_fixed_zones=240"]
+
+[payload.adt]
+tool = "scripts/make-erhai-adt.py"
+owned_memory_size = "0x10000000"
+cpu_regs = "0"
+
+[bootimg]
+# The OnePlus ABL loads init_boot's ramdisk even during fastboot boot, so the
+# payload has to ride inside the kernel field instead of the ramdisk field.
+embed_payload = true
+
+[firmware]
+config = "erhai"
+dsc = "Platforms/OnePlus/erhaiPkg/erhai.dsc"
+fd = "Build/erhaiPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+submodules = [
+  "Common/Mu",
+  "Common/Mu_OEM_Sample",
+  "Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl",
+]
+packages = [
+  "{uefi}",
+  "{uefi}/Platforms/OnePlus",
+  "{tree}/package",
+  "{tree}/drivers/DarwinBoot",
+  "{edk2}",
+  "{uefi}/Common/Mu",
+  "{uefi}/Common/Mu_OEM_Sample",
+  "{uefi}/Silicon/Qualcomm",
+  "{uefi}/Silicon/Silicium",
+]
+
+[firmware.defines]
+DEVICE_MODEL = "erhai"
+ENABLE_SECUREBOOT = "0"
+MEMORY_PROTECTION = "TRUE"
+SHIP_MODE = "FALSE"
+BUILDID_STRING = "erhai-xnu-early-progress-20261022"

@@ -1,0 +1,83 @@
+name: erhai XNU (OnePlus Pad 2 Pro)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: erhai-xnu-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: device
+    steps:
+      - name: Check out the erhai configuration
+        uses: actions/checkout@v4
+        with:
+          path: device
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Prepare the isolated UniXNU source and check the board
+        run: |
+          python3 scripts/test-upstream.py
+          TREE=$(./unixnu --prepare)
+          echo "UNIXNU_TREE=$TREE" >> "$GITHUB_ENV"
+          python3 "$TREE/scripts/test-kernel-source.py"
+          python3 "$TREE/scripts/test-bootimg.py"
+          python3 scripts/test-adt.py AdtTest.test_tree_contract AdtTest.test_invalid_window
+          python3 "$TREE/drivers/DarwinBoot/Test/test-adt.py"
+          cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -I "$TREE/drivers/DarwinBoot/DarwinBootPkg/Driver" \
+            drivers/BootProgress/Test/console.c -o /tmp/boot-progress-test
+          ASAN_OPTIONS=detect_leaks=0 /tmp/boot-progress-test
+
+      - name: Install host tools and check the SDK
+        run: |
+          brew install cmake ninja unifdef llvm mtools
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          df -h .
+
+      - name: Fetch the kernel sources
+        run: |
+          mkdir -p out/erhai/logs
+          ./unixnu defconfig erhai_defconfig
+          ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions libpthread corecrypto-2023 IOStorageFamily 2>&1 | tee out/erhai/logs/actions-fetch.log
+          cp unixnu.lock out/erhai/unixnu.lock
+
+      - name: Build XNU and the FAT payload
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./unixnu build kernel payload -j 3 2>&1 | tee out/erhai/logs/actions-build.log
+
+      - name: Check the native panic argument path
+        run: |
+          python3 drivers/BootProgress/Test/panic-entry.py out/erhai/tree/.cache/xnu-work \
+            --font "$UNIXNU_TREE/drivers/DarwinBoot/DarwinBootPkg/Driver"
+
+      - name: Upload the kernel, payload and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: erhai-xnu-${{ github.run_number }}
+          path: |
+            device/out/erhai/kernel/**
+            device/out/erhai/payload/**
+            device/out/erhai/logs/**
+            device/out/erhai/unixnu.lock
+          if-no-files-found: warn
+          retention-days: 7
