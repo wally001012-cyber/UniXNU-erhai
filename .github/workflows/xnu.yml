@@ -9,6 +9,11 @@ on:
         options: [kernel-payload, kernel-payload-bootimg]
         default: kernel-payload
 
+# Note: GitHub's `shell: bash` already runs
+# /bin/bash --noprofile --norc -e -o pipefail (visible in the run #2/#3 logs),
+# so a failed unixnu inside a tee pipeline does fail the step. No PIPEFLAGS
+# override is needed; the earlier one was a no-op.
+
 permissions:
   contents: read
 
@@ -17,9 +22,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Every step is a shell pipeline; without this a failed unixnu call exits 0
-  # because tee is the last command and run #1 reported success that way.
-  PIPEFLAGS: "-o pipefail"
+  # The per-unit platform seed. `unique-chip-id` and `chip-id` produce
+  # IOPlatformUUID; without the seed a process calling gethostuuid() with a
+  # zero timeout waits forever, which looks like a dead kernel.
+  # board.toml carries unique_chip_id = "required", so payload.py refuses to
+  # build when this is empty rather than silently emitting a seedless ADT.
+  UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
 
 jobs:
   build:
@@ -48,7 +56,10 @@ jobs:
           echo "UNIXNU_TREE=$TREE" >> "$GITHUB_ENV"
           python3 "$TREE/scripts/test-kernel-source.py"
           python3 "$TREE/scripts/test-bootimg.py"
-          python3 scripts/test-adt.py AdtTest.test_tree_contract AdtTest.test_invalid_window
+          # The whole ADT contract, not two hand-picked cases: run #2 and #3
+          # failed here because only test_tree_contract/test_invalid_window
+          # were selected and the rest had never executed.
+          python3 scripts/test-adt.py
           python3 "$TREE/drivers/DarwinBoot/Test/test-adt.py"
           cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
             -I "$TREE/drivers/DarwinBoot/DarwinBootPkg/Driver" \
@@ -86,11 +97,9 @@ jobs:
           # Per-unit platform seed. `unique-chip-id` and `chip-id` produce
           # IOPlatformUUID; without the seed a process calling gethostuuid()
           # with a zero timeout waits forever, which looks like a dead kernel.
-          # Board-level value in board.toml [payload.adt] is a fallback only.
-          UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
         run: |
           set -euo pipefail
-          ./unixnu build kernel payload -j 3 2>&1 | tee out/erhai/logs/actions-build.log
+          ./unixnu build ${{ inputs.steps }} -j 3 2>&1 | tee out/erhai/logs/actions-build.log
 
       - name: Report what the payload actually carries
         if: always()
