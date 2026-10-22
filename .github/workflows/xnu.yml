@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       steps:
-        description: "unixnu build steps"
+        description: "unixnu build steps (bootimg is a separate subcommand, not a build step)"
         type: choice
-        options: [kernel-payload, kernel-payload-bootimg]
+        options: [kernel-payload, kernel-payload-package]
         default: kernel-payload
 
 # Note: GitHub's `shell: bash` already runs
