@@ -57,15 +57,32 @@ archives = [
   "build-libpthread-kernel.py",
 ]
 
-# The prelink is what makes the payload kernel carry Apple's own kexts. sheng
-# ships the exact same block; the slide and the AMFI initializer address are
-# taken verbatim because the target kernelcache is byte-identical.
+# The prelink is what makes the payload kernel carry Apple's own kexts.
+#
+# sheng (SM8550) shipped a larger root set that included AMFI and PMGR. That set
+# is WRONG on SM8750: AppleMobileFileIntegrity asks the policy manager for every
+# decision and panics with "AMFI: No PMGR" (ConfigurationSettings.cpp:235) when
+# no PMGR has published its nub, and nothing on this board publishes one.
+# 7Night-kqx/UniXNU-dada (Xiaomi 15, same SM8750) documents this and ships the
+# reduced set below; IssacL04/UniXNU-Pagani_SM8750 (OnePlus 13T, same SM8750)
+# drops the whole prelink for first boot. Follow dada.
+#
+# The four kexts that would drag AMFI back in through OSBundleLibraries:
+#   com.apple.iokit.IOGPUFamily            (GPU)
+#   com.apple.iokit.IOMobileGraphicsFamily (display accelerator)
+#   com.apple.iokit.IOHIDFamily            (input stack, + IOHIDEventDriver)
+#   com.apple.security.sandbox             (sandbox)
+# None is needed for the video console: that is XNU's own pexpert console,
+# drawn straight into the framebuffer DarwinBoot fills from the UEFI GOP.
 [kernel.prelink]
 tool = "kits/NativePrelink/emit_prelink.py"
 kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
 kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
 slide = "-0x1000000"
-early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
+# No early_security_init on this board. That entry runs the original
+# AppleMobileFileIntegrity initializer; XNU only calls an early security
+# initializer when the prelink metadata names one, so dropping it keeps the
+# AMFI path off entirely. dada does the same for the same reason.
 roots = [
   "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
   "com.apple.driver.AppleARMPlatform",
@@ -74,8 +91,7 @@ roots = [
   "com.apple.driver.AppleEffaceableStorage",
   "com.apple.driver.AppleIISController",
   "com.apple.driver.AppleM2ScalerCSCDriver",
-  "com.apple.driver.AppleMobileFileIntegrity",
-  "com.apple.driver.ApplePMGR",
+  # AMFI and its policy manager are deliberately absent; see the note above.
   "com.apple.driver.IODARTFamily",
   "com.apple.filesystems.apfs",
   "com.apple.iokit.CoreAnalyticsFamily",
@@ -83,9 +99,7 @@ roots = [
   "com.apple.iokit.IOAudio2Family",
   "com.apple.iokit.IOCECFamily",
   "com.apple.iokit.IOCryptoAcceleratorFamily",
-  "com.apple.iokit.IOGPUFamily",
   "com.apple.iokit.IOHDCPFamily",
-  "com.apple.iokit.IOMobileGraphicsFamily",
   "com.apple.iokit.IOReportFamily",
   "com.apple.iokit.IOSlowAdaptiveClockingFamily",
   "com.apple.iokit.IOStorageFamily",
@@ -95,9 +109,6 @@ roots = [
   "com.apple.kext.AppleMatch",
   "com.apple.kext.CoreTrust",
   "com.apple.security.AppleImage4",
-  "com.apple.security.sandbox",
-  "com.apple.iokit.IOHIDFamily",
-  "com.apple.iokit.IOHIDEventDriver",
 ]
 
 [payload]
@@ -131,12 +142,27 @@ panic_screen = false
 # kprintf serial backend sheng writes its early log to, boot-progress=2 turns on
 # the screen checkpoints build-boot-progress.py compiles in, and
 # armcpu-diagnostics / armcpu-spi-ipi make ArmCpu report the GIC and IPI state.
+#
+# Two values are taken from IssacL04/UniXNU-Pagani_SM8750 (OnePlus 13T, same
+# SM8750), which already reaches the root-device wait on this SoC:
+#
+#   kt_fixed_zones=240  sheng's 120 is below what a source XNU needs. The type
+#       allocator asserts n_zones_sig + n_zones_type + 1 <= 32 (kalloc.c:1779);
+#       pagani measured 33 slots needed at the default 260-zone budget and 30 at
+#       240, and the assert fired on the device at the smaller value. Nothing in
+#       the erhai build changes that distribution, so 120 is a guaranteed panic.
+#
+#   cpus=1  bring-up runs on the boot CPU only. SMP needs the secondary-core
+#       entry path, per-core stacks and GIC redistributor bring-up, none of which
+#       this port has exercised yet; pagani keeps the same limit. The ADT still
+#       publishes one CPU for the same reason (cpu_regs = "0" below).
 kernel_args = [
   "-v",
   "serial=3",
   "debug=0x14e",
-  "kt_fixed_zones=120",
+  "kt_fixed_zones=240",
   "boot-progress=2",
+  "cpus=1",
   "armcpu-diagnostics=1",
   "armcpu-spi-ipi=1",
   "-no_slto_panic",
@@ -177,9 +203,14 @@ tool = "scripts/make-erhai-adt.py"
 owned_memory_size = "0x10000000"
 # The real SM8750 MPIDRs, read off this unit and identical to sheng's SM8550
 # layout: six cores in cluster 0, two in cluster 1 at 0x10000/0x10100.
-# Publishing one core makes ArmCpu build a single-CPU topology, and any Apple
-# kext that expects secondaries times out waiting for them.
-cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x10000,0x10100"
+#
+# One core only, matching kernel_args cpus=1. Publishing one core makes ArmCpu
+# build a single-CPU topology, which is what the early bring-up path is audited
+# for: the secondary-core entry, per-core stacks and GIC redistributor bring-up
+# have not been exercised on this board. Publishing eight cores while the kernel
+# is told cpus=1 leaves seven CPUs in the ADT that nothing ever brings online,
+# and any Apple kext that waits on secondaries times out on them.
+cpu_regs = "0"
 packed_data_ramdisk = true
 ipad_identity = true
 trust_cache = true
