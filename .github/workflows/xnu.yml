@@ -3,10 +3,10 @@ name: erhai XNU (OnePlus Pad 2 Pro)
 on:
   workflow_dispatch:
     inputs:
-      steps:
-        description: "unixnu build steps (bootimg is a separate subcommand, not a build step)"
+      target:
+        description: "what to build"
         type: choice
-        options: [kernel-payload, kernel-payload-package]
+        options: [kernel-payload, kernel-payload-package, all]
         default: kernel-payload
 
 # Note: GitHub's `shell: bash` already runs
@@ -94,12 +94,20 @@ jobs:
       - name: Build the kernel with the Apple kexts prelinked, then the payload
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          # Per-unit platform seed. `unique-chip-id` and `chip-id` produce
-          # IOPlatformUUID; without the seed a process calling gethostuuid()
-          # with a zero timeout waits forever, which looks like a dead kernel.
+          TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
-          ./unixnu build ${{ inputs.steps }} -j 3 2>&1 | tee out/erhai/logs/actions-build.log
+          # unixnu build takes its steps as separate tokens (nargs='*' with
+          # choices of single step names), so a hyphenated "kernel-payload"
+          # is rejected: "invalid choice". Translate the input here.
+          case "$TARGET" in
+            kernel-payload)         STEPS="kernel payload" ;;
+            kernel-payload-package) STEPS="kernel package payload" ;;
+            all)                    STEPS="all" ;;
+            *) echo "unknown target: $TARGET" >&2; exit 2 ;;
+          esac
+          echo "unixnu build $STEPS"
+          ./unixnu build $STEPS -j 3 2>&1 | tee out/erhai/logs/actions-build.log
 
       - name: Report what the payload actually carries
         if: always()
