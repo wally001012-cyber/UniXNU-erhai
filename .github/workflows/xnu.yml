@@ -2,6 +2,12 @@ name: erhai XNU (OnePlus Pad 2 Pro)
 
 on:
   workflow_dispatch:
+    inputs:
+      steps:
+        description: "unixnu build steps"
+        type: choice
+        options: [kernel-payload, kernel-payload-bootimg]
+        default: kernel-payload
 
 permissions:
   contents: read
@@ -9,6 +15,11 @@ permissions:
 concurrency:
   group: erhai-xnu-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  # Every step is a shell pipeline; without this a failed unixnu call exits 0
+  # because tee is the last command and run #1 reported success that way.
+  PIPEFLAGS: "-o pipefail"
 
 jobs:
   build:
@@ -31,6 +42,7 @@ jobs:
 
       - name: Prepare the isolated UniXNU source and check the board
         run: |
+          set -euo pipefail
           python3 scripts/test-upstream.py
           TREE=$(./unixnu --prepare)
           echo "UNIXNU_TREE=$TREE" >> "$GITHUB_ENV"
@@ -43,8 +55,16 @@ jobs:
             drivers/BootProgress/Test/console.c -o /tmp/boot-progress-test
           ASAN_OPTIONS=detect_leaks=0 /tmp/boot-progress-test
 
+      - name: Check the board configuration before burning runner time
+        run: |
+          set -euo pipefail
+          python3 scripts/check-board.py
+          # Prove the checker actually rejects bad boards, not just prints OK.
+          python3 scripts/test-check-board.py
+
       - name: Install host tools and check the SDK
         run: |
+          set -euo pipefail
           brew install cmake ninja unifdef llvm mtools
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           xcodebuild -version
@@ -53,19 +73,35 @@ jobs:
 
       - name: Fetch the kernel sources
         run: |
+          set -euo pipefail
           mkdir -p out/erhai/logs
           ./unixnu defconfig erhai_defconfig
-          ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions libpthread corecrypto-2023 IOStorageFamily 2>&1 | tee out/erhai/logs/actions-fetch.log
+          ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions libpthread corecrypto-2023 IOStorageFamily 2>&1 \
+            | tee out/erhai/logs/actions-fetch.log
           cp unixnu.lock out/erhai/unixnu.lock
 
-      - name: Build XNU and the FAT payload
+      - name: Build the kernel with the Apple kexts prelinked, then the payload
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # Per-unit platform seed. `unique-chip-id` and `chip-id` produce
+          # IOPlatformUUID; without the seed a process calling gethostuuid()
+          # with a zero timeout waits forever, which looks like a dead kernel.
+          # Board-level value in board.toml [payload.adt] is a fallback only.
+          UNIXNU_UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
         run: |
+          set -euo pipefail
           ./unixnu build kernel payload -j 3 2>&1 | tee out/erhai/logs/actions-build.log
 
-      - name: Check the native panic argument path
+      - name: Report what the payload actually carries
+        if: always()
         run: |
+          set -euo pipefail
+          python3 scripts/report-payload.py out/erhai || true
+
+      - name: Check the native panic argument path
+        if: success()
+        run: |
+          set -euo pipefail
           python3 drivers/BootProgress/Test/panic-entry.py out/erhai/tree/.cache/xnu-work \
             --font "$UNIXNU_TREE/drivers/DarwinBoot/DarwinBootPkg/Driver"
 
@@ -79,5 +115,6 @@ jobs:
             device/out/erhai/payload/**
             device/out/erhai/logs/**
             device/out/erhai/unixnu.lock
+            device/out/erhai/report/**
           if-no-files-found: warn
           retention-days: 7

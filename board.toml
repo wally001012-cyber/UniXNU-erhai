@@ -1,53 +1,177 @@
 # OnePlus Pad 2 Pro (erhai / OPD2413, SM8750P) — UniXNU device repository.
 #
-# Modelled on IssacL04/UniXNU-Sun_SM8750 (OnePlus 13T, same SM8750 / Sun SoC).
-# Stage target: reach the XNU entry (green bar + S1..S6) on the stock ABL.
+# Ported from UniXNU/UniXNU-sheng (Xiaomi Pad 6S Pro, SM8550) — the only board
+# that has been reported to reach an iPadOS home screen. Everything that is
+# identity or Apple-side plumbing is copied from sheng on purpose: both boards
+# boot the *same unchanged* iPad7,1 / iPadOS 17.7.11 (21H461) restore image, so
+# the platform expert has to believe it is an iPad Pro (12.9-inch) 2nd gen.
 #
-# Hardware values measured on this unit:
+# Hardware values measured on this unit (adb, /proc/iomem, /proc/meminfo):
 #   FD base/size  0xA7000000 / 0x2A8000   (stock uefi_a ELF PT_LOAD)
 #   splash_region 0xFC800000 + 0x2B00000  (live DT /reserved-memory/splash_region)
-#   GIC           0x16000000 / GICR 0x16080000 / stride 0x40000
-#   timebase      19.2 MHz
+#   GICD          0x16000000 + 0x10000    /proc/iomem "GICD"
+#   GICR          0x16080000 + 0x200000   /proc/iomem "GICR", stride 0x40000
+#   APSS_HM       0x16000000 + 0x02000000 MemoryMapLib "APSS_HM"
+#   timebase      19.2 MHz                CNTFRQ_EL0
+#   DRAM base     0x80000000              /proc/iomem gunyah_hyp
 #   panel         3392x2400  qcom,mdss_dsi_panel_XN242_P_D_A0024_vid
 #   touch         novatek,nf_nt36536
-#   UFS           0x1d84000 (not used in this profile)
+#   UFS           0x1d84000              1d84000.ufshc
+#
+# The target image is an iPad7,1 restore: 6.36 GiB IPSW, 44 MiB kernelcache.
 
 [board]
 name = "erhai"
 soc = "SM8750"
-description = "OnePlus Pad 2 Pro OPD2413: XNU source-kernel bring-up with early screen diagnostics"
+description = "OnePlus Pad 2 Pro OPD2413: iPad7,1 userland bring-up"
 kit = "erhai"
+
+# The target OS image: the unchanged iPad7,1 iPadOS 17.7.11 restore.
+# sha256 of the extracted kernelcache is pinned in [kernel.prelink]; the
+# extracted members are cached under out/ipsw/21H461/.
+[ipsw]
+url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
+product = "iPad7,1"
+version = "17.7.11"
+build = "21H461"
+device_class = "j120ap"
+chip_id = 0x8011
+board_id = 12
+fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]
 
 [kernel]
 defconfig = "erhai_defconfig"
-# First reach the platform expert without importing Apple's device drivers.
-source_only = true
+# The prelink (below) is what makes the payload kernel carry Apple's own kexts,
+# so source_only must stay false: export_source() refuses to run alongside
+# [kernel.prelink], and a source-only kernel has __PRELINK_TEXT size 0 and no
+# Apple drivers at all — it can reach the platform expert and nothing further.
+source_only = false
+# Ordering follows UniXNU-sheng/board.toml. build-boot-progress.py is what puts
+# the S1..S6 screen checkpoints in; without it CONFIG_XNU_BOOT_PROGRESS=y is a
+# no-op and a silent hang looks identical to "the kernel never started".
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
-  "build-libpthread-kernel.py",
   "build-arm-platform.py",
+  "build-boot-progress.py",
+  "build-libpthread-kernel.py",
+]
+
+# The prelink is what makes the payload kernel carry Apple's own kexts. sheng
+# ships the exact same block; the slide and the AMFI initializer address are
+# taken verbatim because the target kernelcache is byte-identical.
+[kernel.prelink]
+tool = "kits/NativePrelink/emit_prelink.py"
+kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
+kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
+slide = "-0x1000000"
+early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
+roots = [
+  "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
+  "com.apple.driver.AppleARMPlatform",
+  "com.apple.driver.AppleARMWatchdogTimer",
+  "com.apple.driver.AppleAudioClockLibs",
+  "com.apple.driver.AppleEffaceableStorage",
+  "com.apple.driver.AppleIISController",
+  "com.apple.driver.AppleM2ScalerCSCDriver",
+  "com.apple.driver.AppleMobileFileIntegrity",
+  "com.apple.driver.ApplePMGR",
+  "com.apple.driver.IODARTFamily",
+  "com.apple.filesystems.apfs",
+  "com.apple.iokit.CoreAnalyticsFamily",
+  "com.apple.iokit.IOAVFamily",
+  "com.apple.iokit.IOAudio2Family",
+  "com.apple.iokit.IOCECFamily",
+  "com.apple.iokit.IOCryptoAcceleratorFamily",
+  "com.apple.iokit.IOGPUFamily",
+  "com.apple.iokit.IOHDCPFamily",
+  "com.apple.iokit.IOMobileGraphicsFamily",
+  "com.apple.iokit.IOReportFamily",
+  "com.apple.iokit.IOSlowAdaptiveClockingFamily",
+  "com.apple.iokit.IOStorageFamily",
+  "com.apple.iokit.IOSurface",
+  "com.apple.kec.Libm",
+  "com.apple.kec.corecrypto",
+  "com.apple.kext.AppleMatch",
+  "com.apple.kext.CoreTrust",
+  "com.apple.security.AppleImage4",
+  "com.apple.security.sandbox",
+  "com.apple.iokit.IOHIDFamily",
+  "com.apple.iokit.IOHIDEventDriver",
 ]
 
 [payload]
 volume = "ERHAIESP"
-size_mib = 64
+# A prelinked source kernel is ~67 MiB, and the ADT adds ~11 KiB. 192 MiB is the
+# next power-of-two-ish step that leaves room for a Data seed later, and still
+# sits inside the decompressed region this board's ABL has been booting from.
+# The packer reports the exact requirement if this ever becomes too small.
+size_mib = 192
 loader = "firmware"
-title = "OnePlus Pad 2 Pro XNU bring-up"
-dram_size = "0x10000000"
+title = "OnePlus Pad 2 Pro: iPad7,1 bring-up"
+# DarwinBoot overwrites dram-base/dram-size with the window it actually owns,
+# so this value is only the fallback when the ADT cannot be patched.
+dram_size = "0x2E0000000"
 timeout = 10
-# The source-only kernel needs 33 slots at the default 260-zone budget; 240 needs 30.
-kernel_args = ["-v", "serial=0", "debug=0x14e", "cpus=1", "-enable_kprintf_spam", "kt_fixed_zones=240"]
+# Patch the panic path so a panic paints the screen instead of disappearing?
+# payload.py shells out to <tree>/scripts/patch-xnu-entry-probe.py, which does
+# NOT exist in the upstream tree this board builds from — it lives in
+# UniXNU-sheng's own scripts/. Enabling this makes the payload step fail with
+# "No such file or directory" after the whole kernel has been built. Kept off
+# until that script is vendored into the device patch.
+# Consequence: a panic on this board prints to a serial port nothing is
+# listening to, and the screen simply stops. S1..S6 / boot-progress is the
+# substitute, and it works without any patching.
+panic_screen = false
+# Only flags this kernel actually reads. Every sheng-*/offline-* flag in sheng's
+# board.toml is consumed by source patches that exist in *that* repository, not
+# here; passing them would be decoration. The erhai kit reads its own names.
+kernel_args = [
+  "-v",
+  "serial=0",
+  "debug=0x14e",
+  "cpus=1",
+  "kt_fixed_zones=240",
+  # Lets the xnu build print through early boot instead of buffering into a
+  # zone that does not exist yet — the cheapest way to see where a hang is.
+  "-enable_kprintf_spam",
+]
 
 [payload.adt]
 tool = "scripts/make-erhai-adt.py"
+# 256 MiB is the floor DarwinWindowSizeValid() accepts and the largest window
+# this board can hand out in one ConventionalMemory run (see notes).
 owned_memory_size = "0x10000000"
 cpu_regs = "0"
+ipad_identity = true
+trust_cache = true
+# unique-chip-id + chip-id produce IOPlatformUUID. A process that calls
+# gethostuuid() with a zero timeout blocks forever when the seed is missing —
+# one of the known "kernel runs, nothing appears" failure modes.
+#
+# The seed is this unit's Qualcomm chip serial, read off the device:
+#   adb shell getprop ro.boot.chipecid  ->  0000045a697358b6
+# It is per-unit, so it does not belong in a repository. payload.py only reads
+# the CLI/env seed when this key is literally "required"; any other value here
+# would silently shadow the secret. The workflow supplies the secret as
+# UNIXNU_UNIQUE_CHIP_ID.
+unique_chip_id = "required"
+# chip_id is Apple's, not Qualcomm's: 0x8011 is iPad7,1 / j120ap. The ADT
+# generator refuses to run unless both identity inputs are present and nonzero,
+# so this one is a constant and lives here.
+chip_id = "0x8011"
 
 [bootimg]
 # The OnePlus ABL loads init_boot's ramdisk even during fastboot boot, so the
 # payload has to ride inside the kernel field instead of the ramdisk field.
 embed_payload = true
+
+[[bootimg.dtb_node]]
+path = "/reserved-memory/splash_region"
+props = [
+  { name = "label", type = "s", value = "cont_splash_region" },
+  { name = "reg", type = "x", value = ["0x0", "0xfc800000", "0x0", "0x2b00000"] },
+]
 
 [firmware]
 config = "erhai"
@@ -75,4 +199,4 @@ DEVICE_MODEL = "erhai"
 ENABLE_SECUREBOOT = "0"
 MEMORY_PROTECTION = "TRUE"
 SHIP_MODE = "FALSE"
-BUILDID_STRING = "erhai-xnu-early-progress-20261022"
+BUILDID_STRING = "erhai-ipad71-bringup-20261022"
