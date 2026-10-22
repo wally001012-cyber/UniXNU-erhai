@@ -179,9 +179,20 @@ class AdtTest(unittest.TestCase):
             self.assertEqual(struct.unpack('<I', nodes['/device-tree/cpus/cpu1']['reg']), (0x100,))
 
     def test_cpu_regs_reject_bad_layouts(self):
-        for regs in ((), (0x100,), (0, 0), (0, 0x100, 0x100), (0, 0x101), (0, 0x10000)):
+        """Reject malformed MPIDR lists, accept the real erhai topology."""
+        for regs in ((), (0x100,), (0, 0), (0, 0x100, 0x100), (0, 0x101),
+                     (0, 0x1000000), (0, -0x100)):
             with self.assertRaises(ValueError, msg=f'{regs!r} should be rejected'):
                 adt.make_tree(OWNED, SEED, cpu_regs=regs)
+        # The measured erhai topology: six cores in cluster 0, two at Aff2=1.
+        # sheng's 0xffff bound would reject this, which is why it is 0xffffff.
+        regs = (0, 0x100, 0x200, 0x300, 0x400, 0x500, 0x10000, 0x10100)
+        nodes = tree(cpu_regs=regs)
+        for index, reg in enumerate(regs):
+            self.assertEqual(
+                struct.unpack('<I', nodes[f'/device-tree/cpus/cpu{index}']['reg']), (reg,))
+        self.assertIn('/device-tree/psci', nodes)
+        self.assertNotIn('/device-tree/cpus/cpu8', nodes)
 
     def test_actual_board_resources(self):
         """Cross-check against the live FDT dump, when it and fdtget are here."""

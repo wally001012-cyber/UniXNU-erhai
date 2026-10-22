@@ -105,9 +105,15 @@ def make_tree(memory_size, random_seed, *, dram_size=0x10000000,
     if unique_chip_id is not None and not (0 < unique_chip_id < 1 << 64 and 0 < chip_id < 1 << 32):
         raise ValueError('unique-chip-id must fit 8 bytes and chip-id 4 bytes, both nonzero')
     cpu_regs = list(cpu_regs)
+    # A CPU reg here is an MPIDR value: Aff0[7:0] (must be 0, one thread per
+    # core), Aff1[15:8], Aff2[23:16]. sheng checks reg <= 0xffff, which works
+    # only because all eight of its cores sit in cluster 0; erhai's two prime
+    # cores are cpu@10000/cpu@10100 (Aff2=1), so that bound would reject the
+    # real topology measured on the device.
     if (not cpu_regs or cpu_regs[0] != 0 or len(set(cpu_regs)) != len(cpu_regs) or len(cpu_regs) > 8
-            or any(r < 0 or r > 0xffff or r & 0xff for r in cpu_regs)):
-        raise ValueError('cpu-regs: up to eight distinct Affinity1-numbered cores, boot CPU 0 first')
+            or any(r < 0 or r > 0xFFFFFF or r & 0xff for r in cpu_regs)):
+        raise ValueError('cpu-regs: up to eight distinct MPIDR core ids, boot CPU 0 first, '
+                         'Aff0 must be zero')
 
     cores = [node('cpu%d' % index,
                   [('state', b'running\0' if index == 0 else b'waiting\0'),

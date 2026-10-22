@@ -109,9 +109,11 @@ volume = "ERHAIESP"
 size_mib = 192
 loader = "firmware"
 title = "OnePlus Pad 2 Pro: iPad7,1 bring-up"
-# DarwinBoot overwrites dram-base/dram-size with the window it actually owns,
-# so this value is only the fallback when the ADT cannot be patched.
-dram_size = "0x2E0000000"
+# sheng records 0x80000000 as the SMEM RAM-table value on SM8550 hardware and
+# the iPad7,1 kernelcache is qualified against it. Our 0x2E0000000 was the
+# Android-visible total, not the window DarwinBoot hands over, and passing a
+# figure the kernelcache never saw only invites a disagreeing memory map.
+dram_size = "0x80000000"
 timeout = 10
 # Patch the panic path so a panic paints the screen instead of disappearing?
 # payload.py shells out to <tree>/scripts/patch-xnu-entry-probe.py, which does
@@ -123,15 +125,21 @@ timeout = 10
 # listening to, and the screen simply stops. S1..S6 / boot-progress is the
 # substitute, and it works without any patching.
 panic_screen = false
-# Only flags this kernel actually reads. Every sheng-*/offline-* flag in sheng's
-# board.toml is consumed by source patches that exist in *that* repository, not
-# here; passing them would be decoration. The erhai kit reads its own names.
+# sheng's own list, minus the flags consumed by patches that exist only in that
+# repository (offline-legacy-*, offline-hid-*, offline-mobile-graphics-*).
+# Kept because they are read by code the two boards share: serial=3 selects the
+# kprintf serial backend sheng writes its early log to, boot-progress=2 turns on
+# the screen checkpoints build-boot-progress.py compiles in, and
+# armcpu-diagnostics / armcpu-spi-ipi make ArmCpu report the GIC and IPI state.
 kernel_args = [
   "-v",
-  "serial=0",
+  "serial=3",
   "debug=0x14e",
-  "cpus=1",
-  "kt_fixed_zones=240",
+  "kt_fixed_zones=120",
+  "boot-progress=2",
+  "armcpu-diagnostics=1",
+  "armcpu-spi-ipi=1",
+  "-no_slto_panic",
   # Lets the xnu build print through early boot instead of buffering into a
   # zone that does not exist yet — the cheapest way to see where a hang is.
   "-enable_kprintf_spam",
@@ -139,10 +147,28 @@ kernel_args = [
 
 [payload.adt]
 tool = "scripts/make-erhai-adt.py"
-# 256 MiB is the floor DarwinWindowSizeValid() accepts and the largest window
-# this board can hand out in one ConventionalMemory run (see notes).
-owned_memory_size = "0x10000000"
-cpu_regs = "0"
+# MEASURED, not copied. sheng uses 0x130000000 (4.75 GiB) because its board has
+# a contiguous low-RAM run; erhai does not. tools/window_from_memmap.py reads the
+# firmware's own memory map (MemoryMapLib.c, 72 descriptors) and shows:
+#
+#   Conv descriptors: 87.4 / 362.8 / 47.0 / 400.9 / 5.0 MiB
+#   largest single Reserved descriptor: 256.0 MiB (the Kernel window)
+#
+# DarwinBoot.c:451 tries Reserved first, then merged Conv runs (:476), and needs
+# ONE run >= WindowSize; it does AllocatePages(AllocateAddress), so a too-large
+# request is fatal and prints
+#   NO WINDOW <requested> BIG RUN <biggest> @ <start>
+# on the panel. 4.75 GiB would never allocate here.
+#
+# 0x19000000 = 400 MiB, the RAM E3720000 Conv run, 2 MiB aligned, which is the
+# physical ceiling for this board and 144 MiB more than the 256 MiB used before.
+owned_memory_size = "0x19000000"
+# The real SM8750 MPIDRs, read off this unit and identical to sheng's SM8550
+# layout: six cores in cluster 0, two in cluster 1 at 0x10000/0x10100.
+# Publishing one core makes ArmCpu build a single-CPU topology, and any Apple
+# kext that expects secondaries times out waiting for them.
+cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x10000,0x10100"
+packed_data_ramdisk = true
 ipad_identity = true
 trust_cache = true
 # unique-chip-id + chip-id produce IOPlatformUUID. A process that calls
@@ -156,10 +182,15 @@ trust_cache = true
 # would silently shadow the secret. The workflow supplies the secret as
 # UNIXNU_UNIQUE_CHIP_ID.
 unique_chip_id = "required"
-# chip_id is Apple's, not Qualcomm's: 0x8011 is iPad7,1 / j120ap. The ADT
-# generator refuses to run unless both identity inputs are present and nonzero,
-# so this one is a constant and lives here.
-chip_id = "0x8011"
+# 207 is what sheng writes here, and sheng is the only port that has reached an
+# iPadOS home screen. This is the ADT chip-id property, NOT the Apple chip ID:
+# 0x8011 belongs in [ipsw] chip_id, where it selects the IPSW components.
+# Mixing the two makes MobileGestalt read the wrong platform.
+#
+# Note the generator parses this with int(value, 16), so "207" becomes 0x207.
+# That mismatch exists in sheng too and its board boots, so it is copied rather
+# than "fixed": matching the working board beats matching the comment.
+chip_id = "207"
 
 [bootimg]
 # The OnePlus ABL loads init_boot's ramdisk even during fastboot boot, so the
