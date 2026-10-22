@@ -3,6 +3,9 @@
 A checker that only ever prints OK is indistinguishable from no checker. Each
 case writes a throwaway board.toml, points the script at it through a temporary
 device directory, and asserts the expected message appears.
+
+Everything is located relative to this file, so the suite runs unchanged on the
+macOS runner and on a Windows host.
 """
 import shutil
 import subprocess
@@ -10,7 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-DEVICE = Path(r"E:\one plus\tools\UniXNU-erhai")
+DEVICE = Path(__file__).resolve().parents[1]
 GOOD = (DEVICE / "board.toml").read_text(encoding="utf-8")
 
 

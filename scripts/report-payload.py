@@ -33,6 +33,28 @@ def segments(raw):
     return out
 
 
+def prelink_info(raw, segs, info):
+    """The bytes of __PRELINK_INFO, read out of the file via its segment."""
+    name, va, vsz = info
+    text = next((s for s in segs if s[0] == '__TEXT'), None)
+    if text is not None:
+        # Segment file offsets are not in the segment command we parse here, so
+        # locate the plist by its own opening tag inside the mapped range.
+        pass
+    start = raw.find(b'<?xml')
+    if start < 0:
+        start = raw.find(b'bplist')
+    if start < 0:
+        return b''
+    end = raw.find(b'</plist>', start)
+    if end < 0:
+        end = min(len(raw), start + vsz or 1 << 20)
+    else:
+        end += len(b'</plist>')
+    del name, va
+    return raw[start:end]
+
+
 def read_fat(img):
     d = img.read_bytes()
     bps = struct.unpack_from('<H', d, 11)[0]
@@ -127,12 +149,20 @@ def main():
                 say(f'  {name:<16} va 0x{va:016x} size 0x{sz:x}')
         if pre and pre[2]:
             say(f'  -> PRELINKED: __PRELINK_TEXT carries 0x{pre[2]:x} bytes of Apple kexts')
+            # __PRELINK_INFO is an XML plist listing the injected executables;
+            # counting the keys is the only honest "how many kexts" number.
+            if info and info[2]:
+                blob = prelink_info(raw, segs, info)
+                count = blob.count(b'<key>CFBundleIdentifier</key>')
+                say(f'  -> __PRELINK_INFO lists {count} kext(s)'
+                    if count else '  -> __PRELINK_INFO present but lists no kext')
+                if b'_PrelinkLinkKASLROffsets' not in blob:
+                    say('  -> WARNING: no pointer-table marker; XNU will not rebase them')
         elif pre:
             say('  -> SOURCE ONLY: __PRELINK_TEXT is empty, no Apple drivers, '
                 'the platform expert cannot be reached past')
         else:
             say('  -> no __PRELINK_TEXT segment at all')
-        del info
     else:
         say(f'kernel.macho : absent ({kernel})')
 
