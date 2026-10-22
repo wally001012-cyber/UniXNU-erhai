@@ -268,7 +268,7 @@ void boot_progress_panic(const char *format, va_list *args, unsigned long caller
     }
     uint64_t sp = 0, fp = 0, mpidr = 0, sctlr = 0, tcr = 0, ttbr1 = 0, ttbr0 = 0;
     uint64_t shift = 0, phys_base = 0, virt_base = 0;
-    uint64_t vbar = 0, spsel = 0, args_pa = 0;
+    uint64_t vbar = 0, args_pa = 0;
 #ifndef BOOT_PROGRESS_TEST
     __asm__ volatile("mov %0, sp" : "=r"(sp));
     __asm__ volatile("mov %0, x29" : "=r"(fp));
@@ -278,7 +278,6 @@ void boot_progress_panic(const char *format, va_list *args, unsigned long caller
     __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
     __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
     __asm__ volatile("mrs %0, vbar_el1" : "=r"(vbar));
-    __asm__ volatile("mrs %0, spsel" : "=r"(spsel));
     // TCR_EL1.TG1 (bits 31:30): 0 = 4 KiB, 2 = 16 KiB, 1 = 64 KiB. Same granule
     // arm_vm_init() selects from; needs no external symbol.
     shift = (tcr >> 30) & 3;
@@ -321,7 +320,7 @@ void boot_progress_panic(const char *format, va_list *args, unsigned long caller
     value_raw("options", options); value_raw("SCTLR_EL1", sctlr);
     value_raw("TCR_EL1", tcr); value_raw("TTBR1_EL1", ttbr1);
     value_raw("TTBR0_EL1", ttbr0); value_raw("VBAR_EL1", vbar);
-    value_raw("SPSel", spsel); value_raw("boot_args PA", args_pa);
+    value_raw("VBAR_EL1", vbar); value_raw("boot_args PA", args_pa);
     value_raw("page shift", shift);
     value_raw("physBase", phys_base); value_raw("virtBase", virt_base);
     if (fault_valid) {
