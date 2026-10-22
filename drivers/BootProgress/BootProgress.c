@@ -266,9 +266,7 @@ void boot_progress_panic(const char *format, va_list *args, unsigned long caller
     if (panic_state) {
         panic_footer("NESTED PANIC: first message preserved"); panic_halt(); return;
     }
-    uint64_t sp = 0, fp = 0, mpidr = 0, sctlr = 0, tcr = 0, ttbr1 = 0, ttbr0 = 0;
-    uint64_t shift = 0, phys_base = 0, virt_base = 0;
-    uint64_t vbar = 0, args_pa = 0;
+    uint64_t sp = 0, fp = 0, mpidr = 0, sctlr = 0, tcr = 0, ttbr1 = 0;
 #ifndef BOOT_PROGRESS_TEST
     __asm__ volatile("mov %0, sp" : "=r"(sp));
     __asm__ volatile("mov %0, x29" : "=r"(fp));
@@ -276,20 +274,8 @@ void boot_progress_panic(const char *format, va_list *args, unsigned long caller
     __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
     __asm__ volatile("mrs %0, tcr_el1" : "=r"(tcr));
     __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
-    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
-    __asm__ volatile("mrs %0, vbar_el1" : "=r"(vbar));
-    // TCR_EL1.TG1 (bits 31:30): 0 = 4 KiB, 2 = 16 KiB, 1 = 64 KiB. Same granule
-    // arm_vm_init() selects from; needs no external symbol.
-    shift = (tcr >> 30) & 3;
-    shift = (shift == 2) ? 14 : (shift == 1) ? 16 : 12;
-    // early_boot_args_pa is a PHYSICAL address captured before the MMU was on;
-    // dereferencing it now would read the wrong page.  physBase/virtBase were
-    // copied out by early_boot_progress_init() while still identity mapped.
-    args_pa = early_boot_args_pa;
-    phys_base = early_boot_phys_base;
-    virt_base = early_boot_virt_base;
 #endif
-    panic_open("OnePlus Pad 2 Pro (erhai) / XNU PANIC");
+    panic_open("OnePlus 13T / XNU PANIC");
     text_raw("panic entry reached; values below are hexadecimal\n");
     value_raw("caller", caller); value_raw("MPIDR", mpidr);
     text_raw("last stage: "); text_raw(stage_count ? stages[(stage_count - 1) % HISTORY] : "none"); putc_raw('\n');
@@ -319,10 +305,6 @@ void boot_progress_panic(const char *format, va_list *args, unsigned long caller
     text_raw("DAIF "); hex_raw(flags); text_raw(" reason "); hex_raw(reason); putc_raw('\n');
     value_raw("options", options); value_raw("SCTLR_EL1", sctlr);
     value_raw("TCR_EL1", tcr); value_raw("TTBR1_EL1", ttbr1);
-    value_raw("TTBR0_EL1", ttbr0); value_raw("VBAR_EL1", vbar);
-    value_raw("VBAR_EL1", vbar); value_raw("boot_args PA", args_pa);
-    value_raw("page shift", shift);
-    value_raw("physBase", phys_base); value_raw("virtBase", virt_base);
     if (fault_valid) {
         text_raw("RECORDED KERNEL EXCEPTION\n");
         value_raw("ESR_EL1", fault_esr); value_raw("ELR_EL1", fault_pc);
@@ -334,19 +316,6 @@ void boot_progress_panic(const char *format, va_list *args, unsigned long caller
     for (unsigned i = stage_count - count; i < stage_count; i++) {
         text_raw(stages[i % HISTORY]); putc_raw('\n');
     }
-    // Which checkpoint is missing is what names the failing code region.
-    // early_boot_stage is bumped by start.s / arm_init.c as each one is passed.
-#ifndef BOOT_PROGRESS_NO_VERDICT
-    text_raw("missing next: ");
-    switch (early_boot_stage) {
-    case 3: text_raw("S4 arm_init (fault is inside start.s after MMU on)"); break;
-    case 4: text_raw("S5 PE_init_platform"); break;
-    case 5: text_raw("S6 arm_vm_init complete"); break;
-    case 6: text_raw("post-VM startup"); break;
-    default: text_raw("unknown"); break;
-    }
-    putc_raw('\n');
-#endif
     panic_footer("HALTED: no software reboot"); panic_halt();
 }
 
@@ -368,7 +337,7 @@ void early_boot_progress_init(boot_args *args)
     framebuffer_pa = framebuffer;
     for (unsigned y = 0; y + LINE <= height; y += LINE) clear_line(y);
     unsigned saved = row;
-    row = 0; text_raw("OnePlus Pad 2 Pro (erhai) / source XNU"); row = saved; column = 0;
+    row = 0; text_raw("OnePlus 13T / source XNU"); row = saved; column = 0;
     boot_progress_stage("S1: XNU entry, MMU off");
     value_raw("args PA", (uintptr_t)args);
     value_raw("RAM PA", args->physBase);
@@ -434,7 +403,7 @@ void boot_progress_init(void)
 void early_boot_progress_fatal(boot_args *args, uint64_t esr, uint64_t elr, uint64_t far, uint64_t spsr, uint64_t stage)
 {
     early_boot_progress_init(args);
-    if (framebuffer) panic_open("OnePlus Pad 2 Pro (erhai) / EARLY EXCEPTION");
+    if (framebuffer) panic_open("OnePlus 13T / EARLY EXCEPTION");
     value_raw("last checkpoint", stage);
     value_raw("ESR_EL1", esr); value_raw("ELR_EL1", elr);
     value_raw("FAR_EL1", far); value_raw("SPSR_EL1", spsr);
