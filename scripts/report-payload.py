@@ -33,25 +33,23 @@ def segments(raw):
     return out
 
 
-def prelink_info(raw, segs, info):
-    """The bytes of __PRELINK_INFO, read out of the file via its segment."""
-    name, va, vsz = info
-    text = next((s for s in segs if s[0] == '__TEXT'), None)
-    if text is not None:
-        # Segment file offsets are not in the segment command we parse here, so
-        # locate the plist by its own opening tag inside the mapped range.
-        pass
-    start = raw.find(b'<?xml')
-    if start < 0:
-        start = raw.find(b'bplist')
+def prelink_info(raw):
+    """Return the __PRELINK_INFO blob.
+
+    It is a *binary* plist (bplist00), not XML: looking for '<?xml' finds an
+    unrelated fragment further down the file and makes both the kext count and
+    the pointer-table check wrong. The blob starts at the bplist magic right
+    after the kext text and ends at the end of that bplist's trailer.
+    """
+    start = raw.find(b'bplist00')
     if start < 0:
         return b''
-    end = raw.find(b'</plist>', start)
-    if end < 0:
-        end = min(len(raw), start + vsz or 1 << 20)
-    else:
-        end += len(b'</plist>')
-    del name, va
+    # A bplist is: header(8) + objects + offset table + 32-byte trailer.
+    # The trailer's last 8 bytes are the offset-table offset; the blob length is
+    # not stored, so take the mapped window from the start of the bplist to the
+    # next Mach-O segment (or the end of the file).
+    tail = raw.find(b'bplist00', start + 8)
+    end = tail if tail > 0 else len(raw)
     return raw[start:end]
 
 
@@ -149,15 +147,19 @@ def main():
                 say(f'  {name:<16} va 0x{va:016x} size 0x{sz:x}')
         if pre and pre[2]:
             say(f'  -> PRELINKED: __PRELINK_TEXT carries 0x{pre[2]:x} bytes of Apple kexts')
-            # __PRELINK_INFO is an XML plist listing the injected executables;
-            # counting the keys is the only honest "how many kexts" number.
-            if info and info[2]:
-                blob = prelink_info(raw, segs, info)
-                count = blob.count(b'<key>CFBundleIdentifier</key>')
-                say(f'  -> __PRELINK_INFO lists {count} kext(s)'
-                    if count else '  -> __PRELINK_INFO present but lists no kext')
-                if b'_PrelinkLinkKASLROffsets' not in blob:
-                    say('  -> WARNING: no pointer-table marker; XNU will not rebase them')
+            # __PRELINK_INFO is a binary plist listing every injected executable;
+            # counting CFBundleIdentifier keys is the honest "how many kexts".
+            blob = prelink_info(raw)
+            count = blob.count(b'CFBundleIdentifier')
+            if count:
+                say(f'  -> __PRELINK_INFO lists {count} kext(s), 0x{len(blob):x} B of bplist')
+            else:
+                say('  -> __PRELINK_INFO carries no CFBundleIdentifier; nothing was injected')
+            # The pointer table XNU walks to rebase them lives in __PRELINK_TEXT.
+            if b'_PrelinkLinkKASLROffsets' not in raw:
+                say('  -> WARNING: no _PrelinkLinkKASLROffsets; XNU cannot rebase them')
+            else:
+                say('  -> pointer table _PrelinkLinkKASLROffsets present')
         elif pre:
             say('  -> SOURCE ONLY: __PRELINK_TEXT is empty, no Apple drivers, '
                 'the platform expert cannot be reached past')

@@ -160,9 +160,21 @@ tool = "scripts/make-erhai-adt.py"
 #   NO WINDOW <requested> BIG RUN <biggest> @ <start>
 # on the panel. 4.75 GiB would never allocate here.
 #
-# 0x19000000 = 400 MiB, the RAM E3720000 Conv run, 2 MiB aligned, which is the
-# physical ceiling for this board and 144 MiB more than the 256 MiB used before.
-owned_memory_size = "0x19000000"
+# 0x10000000 = 256 MiB, exactly the "Kernel" reservation at 0xa8000000
+# (MemoryMapLib.c:86), which Pass 1 claims in place. The request must equal the
+# reservation: a 400 MiB request (the biggest Conv run) can never be satisfied
+# in Reserved memory and drove every boot into EFI_OUT_OF_RESOURCES.
+#
+# Two things had to line up for 256 MiB to actually fit:
+#   - Slide bias. Candidate was ALIGN(start, 2 MiB) + (Kernel.Base & 0x1FFFFF),
+#     i.e. 0xa8004000, which leaves 0x0FFFC000 of a 0x10000000 span — 16 KiB
+#     short, always. FitWindow() now retries at the unbiased 2 MiB-aligned
+#     start; that is sound because Boot() copies each segment to
+#     Address + (segment.Address - Kernel.Base), so the low-bit match is
+#     cosmetic and any 16 KiB aligned Address works.
+#   - Real free space. The window is taken from the reservation, not from the
+#     conventional heap that also holds UEFI's runtime data.
+owned_memory_size = "0x10000000"
 # The real SM8750 MPIDRs, read off this unit and identical to sheng's SM8550
 # layout: six cores in cluster 0, two in cluster 1 at 0x10000/0x10100.
 # Publishing one core makes ArmCpu build a single-CPU topology, and any Apple

@@ -5,6 +5,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#if defined(_MSC_VER) || !defined(__STDC_VERSION__) || __STDC_VERSION__ < 201112L
+// aligned_alloc is C11; the MSVC CRT does not ship it.  The test only needs
+// 4096-byte alignment for page-table fixtures.
+static void *portable_aligned_alloc(size_t align, size_t size)
+{
+    void *p = _aligned_malloc(size, align);
+    return p;
+}
+#define aligned_alloc(a, s) portable_aligned_alloc((a), (s))
+#endif
 #define BOOT_PROGRESS_TEST 1
 #ifndef T0SZ_BOOT
 #define T0SZ_BOOT 26
